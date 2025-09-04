@@ -45,10 +45,33 @@ stream_handler.setFormatter(formatter)
 # 给logger添加handler
 logger.addHandler(stream_handler)
 
-detector = LanguageDetectorBuilder.from_all_languages().with_preloaded_language_models().build()
-all_langs = Language.all()
-all_langs = {lang.iso_code_639_1.name.lower(): lang.name for lang in all_langs}
+#detector = LanguageDetectorBuilder.from_all_languages().with_preloaded_language_models().build()
+#all_langs = Language.all()
+#all_langs = {lang.iso_code_639_1.name.lower(): lang.name for lang in all_langs}
+try:
+    # 仅加载中文、英语和日语的语言模型
+    detector = (
+        LanguageDetectorBuilder.from_languages(
+            Language.CHINESE, Language.ENGLISH, Language.JAPANESE
+        )
+        .with_preloaded_language_models()
+        .build()
+    )
+    print("Language detector initialized successfully.")
+except Exception as e:
+    print(f"Failed to initialize language detector: {e}")
+    exit()
 
+try:
+    # 获取所有支持的语言并生成字典
+    all_langs = {
+        lang.iso_code_639_1.name.lower(): lang.name
+        for lang in [Language.CHINESE, Language.ENGLISH, Language.JAPANESE]
+    }
+    print("Supported languages:", all_langs)
+except Exception as e:
+    print(f"Failed to load languages: {e}")
+    exit()
 
 def load_config():
     # load config from json file, check if the file exists first
