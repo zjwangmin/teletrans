@@ -77,59 +77,18 @@ def load_config():
     # load config from json file, check if the file exists first
     if not os.path.exists('%s/config.json' % workspace):
         logger.error('config.json not found, created an empty one')
-        # ADDED: Create config.json with 'excluded_chats' field
-        empty_config = {
-            "api_id": 0,
-            "api_hash": "YOUR_API_HASH",
-            "collapsed_length": 0,
-            "translation_service": "google",
-            "google": {
-                "creds": {}
-            },
-            "azure": {
-                "key": "",
-                "endpoint": "",
-                "region": ""
-            },
-            "deeplx": {
-                "url": "https://api.deeplx.org/translate"
-            },
-            "openai": {
-                "api_key": "",
-                "url": "https://api.openai.com/v1/chat/completions",
-                "model": "gpt-3.5-turbo",
-                "prompt": "",
-                "temperature": 0.5
-            },
-            "gemini": {
-                "api_key": "",
-                "model": "",
-                "prompt": "",
-                "temperature": 0.5
-            },
-            "target_config": {},
-            "excluded_chats": [] # ADDED field
-        }
-        with open('%s/config.json' % workspace, 'w', encoding='utf-8') as f:
-            json.dump(empty_config, f, indent=2, ensure_ascii=False)
         exit()
 
-    with open('%s/config.json' % workspace, 'r', encoding='utf-8') as f:
+    with open('%s/config.json' % workspace, 'r') as f:
         config = json.load(f)
-
-    # ADDED: Ensure 'excluded_chats' key exists in loaded config
-    if 'excluded_chats' not in config:
-        config['excluded_chats'] = []
 
     return config
 
 
 def save_config():
-    global cfg # ADDED: Make cfg global to modify it
     cfg['target_config'] = target_config
-    cfg['excluded_chats'] = excluded_chats # ADDED: Save excluded chats
-    with open('%s/config.json' % workspace, 'w', encoding='utf-8') as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
+    with open('%s/config.json' % workspace, 'w') as f:
+        json.dump(cfg, f, indent=2)
 
 
 ## configuration
@@ -167,9 +126,6 @@ gemini_prompt = gemini_config['prompt'] if 'prompt' in gemini_config else ''
 gemini_temperature = gemini_config['temperature'] if 'temperature' in gemini_config else 0.5
 ## target config
 target_config = cfg['target_config'] if 'target_config' in cfg else {}
-# ADDED: Load excluded chats list
-excluded_chats = cfg['excluded_chats']
-
 
 # 初始化Telegram客户端。
 client = TelegramClient('%s/client' % workspace, api_id, api_hash)
@@ -207,7 +163,6 @@ async def translate_text(text, source_lang, target_langs) -> {}:
     result = {}
     if emoji.purely_emoji(text):
         return result
-    # NO SHORT TEXT FILTERING HERE, AS PER YOUR ORIGINAL .bak FILE
     detect_lang = detector.detect_language_of(text).iso_code_639_1.name.lower()
     if detect_lang in target_langs and detect_lang != source_lang:
         return result
@@ -346,8 +301,6 @@ async def translate_gemini(text, source_lang, target_lang, session):
 
 
 async def command_mode(event, target_key, text):
-    chat_id = event.chat_id # ADDED: Get chat_id
-    
     if text.startswith('.tt-on-global') or text == '.tt-off-global':
         target_key = '0.%d' % event.sender_id
         text = text.replace('-global', '')
@@ -358,7 +311,6 @@ async def command_mode(event, target_key, text):
             del target_config[target_key]
             save_config()
             logger.info("已禁用: %s" % target_key)
-        # ORIGINAL BEHAVIOR: No extra confirmation message, just delete command
         return
 
     if text.startswith('.tt-on,'):
@@ -378,46 +330,16 @@ async def command_mode(event, target_key, text):
         return
 
     if text.startswith('.tt-skip'):
-        # Following exact logic from .bak: remove ".tt-skip" prefix
-        original_message_text = (await client.get_messages(event.chat_id, ids=event.id)).text
-        # Assuming .tt-skip will be at the very front of the edited message
-        if original_message_text.startswith('.tt-skip'):
-            clean_text = original_message_text[len('.tt-skip'):].strip()
-            await event.message.edit(clean_text)
-        
+        await event.message.edit(text[8:].strip())
         logger.info("跳过翻译")
-        await asyncio.sleep(3) # From .bak, keep this
-        await event.message.delete() # From .bak, keep this
         return
 
     if text.startswith('.tt-once,'):
         command, raw_text = text.split(' ', 1)
         _, source_lang, target_langs = command.split(',')
         logger.info(f"翻译消息: {raw_text}")
-        # ORIGINAL: No once_mode parameter, so call as original
-        await translate_and_edit(event.message, raw_text, source_lang, target_langs.split('|')) # Call as original
+        await translate_and_edit(event.message, raw_text, source_lang, target_langs.split('|'))
         return
-    
-    # ADDED START: New commands for chat exclusion
-    if text == '.tt-exclude-chat':
-        await event.delete() # Delete the command message
-        if chat_id not in excluded_chats:
-            excluded_chats.append(chat_id)
-            save_config()
-            logger.info(f"Chat {chat_id} excluded from translation.")
-        # ORIGINAL BEHAVIOR: No extra confirmation message, just delete command
-        return
-
-    if text == '.tt-include-chat':
-        await event.delete() # Delete the command message
-        logger.info(f"chat_id: {chat_id} translate. excluded_chats:{excluded_chats}")
-        if chat_id in excluded_chats:
-            excluded_chats.remove(chat_id)
-            save_config()
-            logger.info(f"Chat {chat_id} included for translation.")
-        # ORIGINAL BEHAVIOR: No extra confirmation message, just delete command
-        return
-    # ADDED END: New commands for chat exclusion
 
     await event.message.edit("未知命令")
     await asyncio.sleep(3)
@@ -428,9 +350,6 @@ async def command_mode(event, target_key, text):
 @client.on(events.NewMessage(outgoing=True))
 @client.on(events.MessageEdited(outgoing=True))
 async def handle_message(event):
-    chat_id = event.chat_id # ADDED: Get chat_id for exclusion check
-    
-
     target_key = '%d.%d' % (event.chat_id, event.sender_id)
     try:
         message = event.message
@@ -452,11 +371,6 @@ async def handle_message(event):
         # command mode
         if message_content.startswith('.tt-'):
             await command_mode(event, target_key, message_content)
-            return
-
-        # ADDED: Check if current chat_id is in the excluded list, skip if it is
-        if chat_id in excluded_chats:
-            logger.info(f"Skipping message {event.id} in excluded chat: {chat_id}")
             return
 
         # handle reply message
@@ -500,7 +414,6 @@ async def handle_message(event):
         logger.error(f"Error handling message: {e}")
 
 
-# ADDED: Removed once_mode and is_reply parameters to restore to original signature
 async def translate_and_edit(message, message_content, source_lang, target_langs):
     start_time = time.time()  # 记录开始时间
     translated_texts = await translate_text(message_content, source_lang, target_langs)
@@ -528,7 +441,6 @@ async def translate_and_edit(message, message_content, source_lang, target_langs
     pattern_matches_modified = len(re.findall(pattern, modified_message))
 
     # Calculate offsets and lengths
-    # THIS CODE IS EXACTLY AS IN YOUR .bak FILE
     offset = len(translated_text) + pattern_matches_translated + 1
     length = len(modified_message) - len(translated_text) + pattern_matches_modified - pattern_matches_translated - 1
 
@@ -549,4 +461,3 @@ try:
 finally:
     # 断开客户端连接。
     client.disconnect()
-
